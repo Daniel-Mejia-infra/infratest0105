@@ -1,0 +1,139 @@
+name: Deploy QA - Infra Agent FLIT
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmacion:
+        description: 'Escribe CONFIRMAR para aprobar el despliegue a QA'
+        required: true
+        type: string
+
+jobs:
+  validar-confirmacion:
+    name: Validar confirmacion del Lider Tecnico
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verificar confirmacion
+        run: |
+          if [ "${{ github.event.inputs.confirmacion }}" != "CONFIRMAR" ]; then
+            echo "ERROR - Debes escribir CONFIRMAR para aprobar el despliegue"
+            exit 1
+          fi
+          echo "OK - Confirmacion valida - Procediendo con despliegue a QA"
+
+  deploy-qa:
+    name: Despliegue a QA
+    runs-on: ubuntu-latest
+    needs: validar-confirmacion
+
+    steps:
+      - name: Obtener codigo del repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar llave SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/infra_agent
+          chmod 600 ~/.ssh/infra_agent
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Iniciar despliegue QA
+        run: |
+          echo "================================================"
+          echo "INFRA AGENT FLIT - Iniciando despliegue a QA"
+          echo "Fecha: $(date '+%d/%m/%Y %H:%M:%S')"
+          echo "Aprobado por: ${{ github.actor }}"
+          echo "Commit: ${GITHUB_SHA:0:8}"
+          echo "================================================"
+
+      - name: Desplegar en VPS
+        run: |
+          ssh -i ~/.ssh/infra_agent -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'ENDSSH'
+            echo "================================================"
+            echo "[FLIT] Conectado a la VPS - Entorno: QA"
+            echo "[FLIT] Fecha: $(date '+%d/%m/%Y %H:%M:%S')"
+            echo "================================================"
+
+            echo "[FLIT] Paso 1/5 - Preparando directorios QA..."
+            mkdir -p /opt/app/qa
+            cd /opt/app/qa
+
+            echo "[FLIT] Paso 2/5 - Clonando o actualizando repositorio..."
+            if [ -d ".git" ]; then
+              git pull origin main
+            else
+              git clone https://github.com/Daniel-Mejia-infra/infratest0105.git .
+            fi
+
+            echo "[FLIT] Paso 3/5 - Construyendo imagen Docker QA..."
+            docker build -t app-qa:latest -f infra/Dockerfile app/
+
+            echo "[FLIT] Paso 4/5 - Reiniciando contenedor QA..."
+            docker stop app-qa 2>/dev/null || true
+            docker rm app-qa 2>/dev/null || true
+            docker run -d \
+              --name app-qa \
+              --restart unless-stopped \
+              -p 3002:3000 \
+              -e NODE_ENV=qa \
+              app-qa:latest
+
+            echo "[FLIT] Paso 5/5 - Verificando healthcheck QA..."
+            sleep 10
+            for i in 1 2 3; do
+              if curl -sf http://localhost:3002/health > /dev/null; then
+                echo "[FLIT] OK - Healthcheck QA exitoso en intento $i"
+                echo "[FLIT] OK - Despliegue QA completado exitosamente"
+                echo "[FLIT] App disponible en: http://$(hostname -I | awk '{print $1}'):3002"
+                exit 0
+              fi
+              echo "[FLIT] Intento $i fallido, reintentando en 10s..."
+              sleep 10
+            done
+
+            echo "[FLIT] ERROR - Healthcheck QA fallido despues de 3 intentos"
+            exit 1
+          ENDSSH
+
+      - name: Generar reporte de despliegue QA
+        if: always()
+        run: |
+          FECHA=$(date '+%d/%m/%Y')
+          HORA=$(date '+%H:%M:%S')
+          FECHA_ARCHIVO=$(date '+%Y-%m-%d')
+          STATUS="${{ job.status }}"
+          COMMIT="${GITHUB_SHA:0:8}"
+          ACTOR="${{ github.actor }}"
+
+          mkdir -p docs/reports
+          cat > docs/reports/reporte-qa-${FECHA_ARCHIVO}.md << REPORTE
+          # Reporte de Despliegue - QA
+
+          | Campo | Valor |
+          |-------|-------|
+          | **Fecha** | ${FECHA} |
+          | **Hora** | ${HORA} |
+          | **Entorno** | QA |
+          | **Servidor** | ${{ secrets.VPS_HOST }} |
+          | **Agente** | infra-agent FLIT |
+          | **MD del agente** | infra-agent.md |
+          | **Aprobado por** | ${ACTOR} |
+          | **Commit** | ${COMMIT} |
+          | **Resultado** | ${STATUS} |
+
+          ## Logs del proceso
+
+          Ver logs completos en: Actions > Deploy QA - Infra Agent FLIT > ${{ github.run_id }}
+
+          ## Resumen
+
+          Despliegue a QA ejecutado manualmente por el Infra Agent FLIT
+          previa confirmacion explicita del Lider Tecnico. La aplicacion
+          Node.js fue construida con Docker y desplegada en el puerto 3002.
+
+          ## Acceso
+          - **URL QA:** http://${{ secrets.VPS_HOST }}:3002
+          - **Healthcheck:** http://${{ secrets.VPS_HOST }}:3002/health
+          REPORTE
+
+          echo "Reporte generado: docs/reports/reporte-qa-${FECHA_ARCHIVO}.md"
