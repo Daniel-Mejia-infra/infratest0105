@@ -1,0 +1,125 @@
+name: Deploy DEV - Infra Agent FLIT
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy-dev:
+    name: Despliegue a DEV
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Obtener codigo del repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar llave SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/infra_agent
+          chmod 600 ~/.ssh/infra_agent
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Iniciar despliegue DEV
+        run: |
+          echo "================================================"
+          echo "INFRA AGENT FLIT - Iniciando despliegue a DEV"
+          echo "Fecha: $(date '+%d/%m/%Y %H:%M:%S')"
+          echo "Rama: ${GITHUB_REF_NAME}"
+          echo "Commit: ${GITHUB_SHA:0:8}"
+          echo "================================================"
+
+      - name: Desplegar en VPS
+        run: |
+          ssh -i ~/.ssh/infra_agent -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'ENDSSH'
+            echo "================================================"
+            echo "[FLIT] Conectado a la VPS - Entorno: DEV"
+            echo "[FLIT] Fecha: $(date '+%d/%m/%Y %H:%M:%S')"
+            echo "================================================"
+
+            echo "[FLIT] Paso 1/5 - Preparando directorios..."
+            mkdir -p /opt/app/dev
+            cd /opt/app/dev
+
+            echo "[FLIT] Paso 2/5 - Clonando o actualizando repositorio..."
+            if [ -d ".git" ]; then
+              git pull origin main
+            else
+              git clone https://github.com/Daniel-Mejia-infra/infratest0105.git .
+            fi
+
+            echo "[FLIT] Paso 3/5 - Construyendo imagen Docker..."
+            docker build -t app-dev:latest -f infra/Dockerfile app/
+
+            echo "[FLIT] Paso 4/5 - Reiniciando contenedor DEV..."
+            docker stop app-dev 2>/dev/null || true
+            docker rm app-dev 2>/dev/null || true
+            docker run -d \
+              --name app-dev \
+              --restart unless-stopped \
+              -p 3001:3000 \
+              -e NODE_ENV=development \
+              app-dev:latest
+
+            echo "[FLIT] Paso 5/5 - Verificando healthcheck..."
+            sleep 10
+            for i in 1 2 3; do
+              if curl -sf http://localhost:3001/health > /dev/null; then
+                echo "[FLIT] OK - Healthcheck exitoso en intento $i"
+                echo "[FLIT] OK - Despliegue DEV completado exitosamente"
+                echo "[FLIT] App disponible en: http://$(hostname -I | awk '{print $1}'):3001"
+                exit 0
+              fi
+              echo "[FLIT] Intento $i fallido, reintentando en 10s..."
+              sleep 10
+            done
+
+            echo "[FLIT] ERROR - Healthcheck fallido despues de 3 intentos"
+            echo "[FLIT] Iniciando rollback automatico..."
+            docker stop app-dev 2>/dev/null || true
+            docker rm app-dev 2>/dev/null || true
+            exit 1
+          ENDSSH
+
+      - name: Generar reporte de despliegue
+        if: always()
+        run: |
+          FECHA=$(date '+%d/%m/%Y')
+          HORA=$(date '+%H:%M:%S')
+          FECHA_ARCHIVO=$(date '+%Y-%m-%d')
+          STATUS="${{ job.status }}"
+          COMMIT="${GITHUB_SHA:0:8}"
+          RAMA="${GITHUB_REF_NAME}"
+
+          mkdir -p docs/reports
+          cat > docs/reports/reporte-dev-${FECHA_ARCHIVO}.md << REPORTE
+          # Reporte de Despliegue - DEV
+
+          | Campo | Valor |
+          |-------|-------|
+          | **Fecha** | ${FECHA} |
+          | **Hora** | ${HORA} |
+          | **Entorno** | DEV |
+          | **Servidor** | ${{ secrets.VPS_HOST }} |
+          | **Agente** | infra-agent FLIT |
+          | **MD del agente** | infra-agent.md |
+          | **Rama** | ${RAMA} |
+          | **Commit** | ${COMMIT} |
+          | **Resultado** | ${STATUS} |
+
+          ## Logs del proceso
+
+          Ver logs completos en: Actions > Deploy DEV - Infra Agent FLIT > ${{ github.run_id }}
+
+          ## Resumen
+
+          Despliegue ejecutado automaticamente por el Infra Agent FLIT tras
+          detectar push en la rama main. La aplicacion Node.js fue construida
+          con Docker y desplegada en el puerto 3001 del servidor DEV.
+
+          ## Acceso
+          - **URL DEV:** http://${{ secrets.VPS_HOST }}:3001
+          - **Healthcheck:** http://${{ secrets.VPS_HOST }}:3001/health
+          REPORTE
+
+          echo "Reporte generado: docs/reports/reporte-dev-${FECHA_ARCHIVO}.md"
