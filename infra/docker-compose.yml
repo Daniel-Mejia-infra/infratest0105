@@ -1,0 +1,24 @@
+﻿services:
+  app-dev:
+    build:
+      context: ../app
+      dockerfile: ../infra/Dockerfile
+    container_name: app-dev
+    ports:
+      - "3001:3000"
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+    restart: unless-stopped
+
+  app-qa:
+    build:
+      context: ../app
+      dockerfile: ../infra/Dockerfile
+    container_name: app-qa
+    ports:
+      - "3002:3000"
+    environment:
+      - NODE_ENV=qa
+      - PORT=3000
+    restart: unless-stopped

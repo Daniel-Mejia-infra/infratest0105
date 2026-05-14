@@ -1,0 +1,13 @@
+﻿{
+  "name": "infratest0105",
+  "version": "1.0.0",
+  "description": "App de prueba para Infra Agent FLIT",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
