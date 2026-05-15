@@ -14,31 +14,38 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Executing Remote SSH Commands
-        uses: appleboy/ssh-action@master
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
+          debug: true
           script: |
             echo "🚀 Iniciando despliegue de infratest en VPS"
-            # Directorio objetivo en la VPS
             TARGET_PATH="/opt/apps/infratest-dev"
-            mkdir -p $TARGET_PATH
+            
+            # Asegurar que el directorio existe
+            sudo mkdir -p $TARGET_PATH
+            sudo chown -R ${{ secrets.VPS_USER }}:${{ secrets.VPS_USER }} $TARGET_PATH
+            
             cd $TARGET_PATH
             
+            # Inicializar o actualizar repo
             if [ ! -d ".git" ]; then
+              echo "Clonando repositorio..."
               git clone https://github.com/Daniel-Mejia-infra/infratest0105.git .
             else
-              git fetch origin
+              echo "Actualizando repositorio..."
+              git fetch origin main
               git reset --hard origin/main
             fi
             
-            # Ir a la carpeta donde está el docker-compose
+            # Desplegar
             cd infra
-            
-            # Levantar con un nombre de proyecto único
+            echo "Levantando contenedores..."
+            docker compose -p infratest_dev down --remove-orphans
             docker compose -p infratest_dev up --build -d
             
-            echo "✅ Despliegue completado."
+            echo "✅ Proceso finalizado."
             docker ps | grep infratest_dev
