@@ -1,0 +1,44 @@
+name: VPS Deployment (Infratest)
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Executing Remote SSH Commands
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          script: |
+            echo "🚀 Iniciando despliegue de infratest en VPS"
+            # Directorio objetivo en la VPS
+            TARGET_PATH="/opt/apps/infratest-dev"
+            mkdir -p $TARGET_PATH
+            cd $TARGET_PATH
+            
+            if [ ! -d ".git" ]; then
+              git clone https://github.com/Daniel-Mejia-infra/infratest0105.git .
+            else
+              git fetch origin
+              git reset --hard origin/main
+            fi
+            
+            # Ir a la carpeta donde está el docker-compose
+            cd infra
+            
+            # Levantar con un nombre de proyecto único
+            docker compose -p infratest_dev up --build -d
+            
+            echo "✅ Despliegue completado."
+            docker ps | grep infratest_dev
